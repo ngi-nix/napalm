@@ -38,7 +38,11 @@ let
 
       dontPatch = true;
       dontBuild = true;
-      dontConfigure = true;
+
+      configurePhase = ''
+      # Ensures that fixup phase will use these in the path
+      export PATH=${pkgs.lib.foldl (acc: v: "${acc}${v}/bin:") "" buildInputs}$PATH
+      '';
 
       installPhase = ''
       mkdir -p $out/package
@@ -58,11 +62,24 @@ let
           patchShebangs $file;
       done
 
+      # Patch all files that are executable
+      for file in $(find $out -type f -executable); do
+          patchShebangs $file;
+      done
+
+      # Patch every file without extension
+      for file in $(find . -type f ! -name "*.*"); do
+          patchShebangs $file
+      done;
+
+      # Update script section of package.json so that it uses npx
+      # which allows to use paths inside node_modules
+      node ${./scripts}/npx-patcher.mjs $out/package/package.json
       cd $out
 
       # Package everything up
       echo Packaging ${pname} ...
-      tar -czf package.tgz package
+      tar -cvzf package.tgz package
 
       # Remove untared package
       echo Cleanup of ${pname}
@@ -276,7 +293,7 @@ let
 
             ${pkgs.nodejs}/bin/npm \$@ || exit -1
 
-            echo "Runing posNpmHook"
+            echo "Runing postNpmHook"
 
             ${postNpmHook}
             EOF
@@ -303,8 +320,9 @@ let
 
             # TODO: why does the unpacker not set the sourceRoot?
             sourceRoot=$PWD
-          
-            node ${./lock-patcher/index.js} ${snapshot}
+         
+            echo "Patching npm packages integrity" 
+            node ${./scripts}/lock-patcher.mjs ${snapshot}
 
             echo "Starting napalm registry"
 
